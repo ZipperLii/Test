@@ -30,10 +30,12 @@ class LeNet(nn.Module):
         X = self.fc3(X) # 1×1×84 -> 1×1×10
         return X
 
-class AlexNet():
+
+class AlexNet(nn.Module):
     def __init__(self, num_classes=1000):
+        super().__init__()
         self.conv = nn.Sequential(
-            # conv1 3×224×224 -> 96×55×55
+            # conv1 3×227×227 -> 96×55×55
             nn.Conv2d(3, 96, kernel_size=11, stride=4, padding=0),
             nn.ReLU(),
             # maxpool 96×55×55 -> 96×27×27
@@ -68,5 +70,57 @@ class AlexNet():
         output = self.fc(feature)
         return output
 
+class VGG(nn.Module):
+    """
+    params:
+    - conv_arch: a list like [[num1_conv, out1_channels], [num2_conv, out2_channels], ...]
+    - num_classes: classes number of output layers
+    """    
+    def __init__(self, conv_arch, num_classes):
+        super().__init__()
+        self.activation = nn.ReLU(inplace=True)
+        in_channels = 3
+        conv_blks = []
+        for (num_convs, out_channels) in conv_arch:
+            conv_blks.append(self.vgg_block(num_convs, in_channels, out_channels))
+            in_channels = out_channels
 
+        self.conv_layers = nn.Sequential(*conv_blks)
+        self.fc_layers = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(out_channels * 7 * 7, 4096),
+            self.activation,
+            nn.Dropout(0.5),
+            nn.Linear(4096, 4096),
+            self.activation,
+            nn.Dropout(0.5),
+            nn.Linear(4096, num_classes)
+        )
+
+    def vgg_block(self, num_convs, in_channels, out_channels):
+        """
+        Define a VGG block.
+        Each conv has the same kernel size and feature size.
+        The former conv's out_channels = The latter conv's in_channel.
+        """
+        layers = []
+        for _ in range(num_convs):
+            layers.append(nn.Conv2d(in_channels, out_channels,
+                                    kernel_size=3, stride=1, padding=1))
+            layers.append(self.activation)
+            in_channels = out_channels
+        layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+        return nn.Sequential(*layers)
+    
+    def forward(self, img):
+        features = self.conv_layers(img)
+        output = self.fc_layers(features)
+        return output
+
+class GoogleNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+
+    def Inception(self):
 
