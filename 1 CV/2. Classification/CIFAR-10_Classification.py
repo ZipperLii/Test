@@ -1,11 +1,12 @@
 import torch
 import torchvision
 import torch.nn as nn
-from ImageNet import AlexNet
+# from ImageNet import AlexNet
 from ImageNet import VGG
 from torch.utils import data
 from torchvision import transforms
 from d2l import torch as d2l
+from tqdm import tqdm
 
 def try_gpu(i=0):
     if torch.cuda.device_count() >= i + 1:
@@ -41,7 +42,7 @@ def init_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         nn.init.xavier_uniform_(m.weight)
 
-def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
+def train_model(net, train_iter, test_iter, num_epochs, lr, device, plot=False):
     # initialize weights
     net.apply(init_weights)
     # train on gpu?
@@ -51,38 +52,48 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
     optimizer = get_optimizer(net, lr)
     # criterion
     loss = nn.CrossEntropyLoss()
-    # For plotting data in animation
-    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs],
-                            legend=['train loss', 'train acc', 'test acc'])
+    if plot==True:
+        # For plotting data in animation
+        animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs],
+                                legend=['train loss', 'train acc', 'test acc'])
     timer, num_batches = d2l.Timer(), len(train_iter)
 
     # start training
     for epoch in range(num_epochs):
         metric = d2l.Accumulator(3)
         net.train()
-        for i, (X, y) in enumerate(train_iter):
-            timer.start()
-            optimizer.zero_grad()
-            X, y = X.to(device), y.to(device)
-            y_hat = net(X)
-            l = loss(y_hat, y)
-            l.backward()
-            optimizer.step()
-            with torch.no_grad():
-                metric.add(l * X.shape[0], d2l.accuracy(y_hat, y), X.shape[0])
-            timer.stop()
-            train_l = metric[0] / metric[2]
-            train_acc = metric[1] / metric[2]
-            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
-                animator.add(epoch + (i + 1) / num_batches,
-                             (train_l, train_acc, None))
+        with tqdm(total=len(train_iter), desc=f"Epoch {epoch + 1}/{num_epochs}") as pbar:
+            for i, (X, y) in enumerate(train_iter):
+                timer.start()
+                optimizer.zero_grad()
+                X, y = X.to(device), y.to(device)
+                y_hat = net(X)
+                l = loss(y_hat, y)
+                l.backward()
+                optimizer.step()
+                with torch.no_grad():
+                    metric.add(l * X.shape[0], d2l.accuracy(y_hat, y), X.shape[0])
+                    timer.stop()
+                    train_l = metric[0] / metric[2]
+                    train_acc = metric[1] / metric[2]
+                    if plot == True:
+                        if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
+                            animator.add(epoch + (i + 1) / num_batches,
+                                        (train_l, train_acc, None))
+                # update bar
+                pbar.set_postfix({"Loss": train_l, "Accuracy": train_acc})
+                pbar.update(1)
+
         test_acc = evaluate_accuracy_gpu(net, test_iter)
-        animator.add(epoch + 1, (None, None, test_acc))
-    print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
-          f'test acc {test_acc:.3f}')
+        if plot == True:
+            animator.add(epoch + 1, (None, None, test_acc))
+        print(f"Epoch {epoch + 1}/{num_epochs} -> Train Accuracy: {train_acc:.4f}, Train Loss: {train_l:.4f}, Test Accuracy: {test_acc:.4f}")
+        
+    print(f'Final loss {train_l:.3f}, Final Train acc {train_acc:.3f}, '
+          f'Final Test acc {test_acc:.3f}')
     print(f'{metric[2] * num_epochs / timer.sum():.1f} examples/sec '
           f'on {str(device)}')
-    
+
 def main(train = None):
     if train == 'Train':
         trans = transforms.Compose([
@@ -90,19 +101,19 @@ def main(train = None):
             transforms.Resize((224, 224))
         ])
         train_dataset = torchvision.datasets.CIFAR10(
-            "../data",
+            ".data",
             True,
             trans,
             download=True
         )
         test_dataset = torchvision.datasets.CIFAR10(
-            "../data",
+            ".data",
             False,
             trans,
             download=True
         )
 
-        batch_size = 100
+        batch_size = 64
         train_iter = data.DataLoader(train_dataset, batch_size, shuffle=True)
         test_iter = data.DataLoader(test_dataset, batch_size, shuffle=True)
 
@@ -110,7 +121,7 @@ def main(train = None):
         architecture = ((2,64), (2,128), (3,256), (3,512), (3,512))
         model = VGG(architecture, 10)
         num_epochs = 20
-        train_ch6(net=model,
+        train_model(net=model,
                 train_iter=train_iter,
                 test_iter=test_iter,
                 num_epochs=num_epochs,
@@ -118,7 +129,7 @@ def main(train = None):
                 device=try_gpu())
         # save model weights
         model_weights = 'VGG16-CIFAR10-epoch20'
-        PATH = f'./checkpoints/MNIST_Classification/{model_weights}.pth'
+        PATH = f'.checkpoints/CIFAR-10/{model_weights}.pth'
         save_model(model, PATH)
 
     else:
@@ -128,20 +139,21 @@ def main(train = None):
         ])
 
         test_dataset = torchvision.datasets.CIFAR10(
-            "../data",
+            "./DeepLearning/CV/data",
             False,
             trans,
             download=True
         )
 
-        batch_size = 100
+        batch_size = 64
         test_iter = data.DataLoader(test_dataset, batch_size, shuffle=True)
 
-        MODEL_PATH = './checkpoints/MNIST_Classification/VGG16-CIFAR10-epoch20.pth'
+        MODEL_PATH = '.checkpoints/CIFAR-10/VGG16-CIFAR10-epoch20.pth'
         architecture = ((2,64), (2,128), (3,256), (3,512), (3,512))
         test_model = VGG(architecture, 10)
         test_model.load_state_dict(torch.load(MODEL_PATH))
         test_acc = evaluate_accuracy_gpu(test_model, test_iter)
+        print(test_acc)
 
 if __name__ == '__main__':
     main()
