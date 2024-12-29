@@ -5,3 +5,6 @@ __pycache__/
 *.h5
 .vscode/
 .idea/
+data
+checkpoint
+.ipynb_checkpoints/
