@@ -1,61 +1,53 @@
 import torch
-from torch import nn
+import torch.nn as nn
 from torch.nn import functional as F
 
 
-def get_params(vocab_size, num_hiddens, device):
-    num_inputs = num_outputs = vocab_size
-    def normal(shape):
-        return torch.randn(size=shape, device=device) * 0.01
+class RNNModel(nn.Module):
+    def __init__(self,  vocab_size, num_hiddens, gate_type=None, **kwargs):
+        super(RNNModel, self).__init__(**kwargs)
+        if gate_type == 'GRU':
+            self.rnn = nn.GRU(vocab_size, num_hiddens)
+        elif gate_type == 'LSTM':
+            self.rnn = nn.LSTM(vocab_size, num_hiddens)
+        else:
+            self.rnn = nn.RNN(vocab_size, num_hiddens)
+        self.vocab_size = vocab_size
+        self.num_hiddens = self.rnn.hidden_size
+        # if RNN is not bidirectional, num_directions = 1
+        # if RNN is bidirectional, num_directions = 2
+        if not self.rnn.bidirectional:
+            self.num_directions = 1
+            # add a fully connected layer to output
+            self.linear = nn.Linear(self.num_hiddens, self.vocab_size)
+        else:
+            self.num_directions = 2
+            # because the output of a bidirectional RNN is the concatenation of the outputs of two RNNs
+            self.linear = nn.Linear(self.num_hiddens * 2, self.vocab_size)
 
-    W_xh = normal((num_inputs, num_hiddens))
-    W_hh = normal((num_hiddens, num_hiddens))
-    b_h = torch.zeros(num_hiddens, device=device)
+    def forward(self, inputs, state):
+        # the input shape of nn.RNN is (seq_len, batch, input_size)
+        X = F.one_hot(inputs.T.long(), self.vocab_size)
+        X = X.to(torch.float32)
+        # this Y is the output of the last hidden layer
+        Y, state = self.rnn(X, state)
+        # The fully connected layer first reshapes Y to (time steps * batch size, number of hidden units)
+        # Its output shape is (time steps * batch size, vocab size).
+        output = self.linear(Y.reshape((-1, Y.shape[-1])))
+        return output, state
 
-    W_hq = normal((num_hiddens, num_outputs))
-    b_q = torch.zeros(num_outputs, device=device)
-
-    params = [W_xh, W_hh, b_h, W_hq, b_q]
-    for param in params:
-        param.requires_grad_(True)
-    return params
-
-
-def init_rnn_state(batch_size, num_hiddens, device):
-    return (torch.zeros((batch_size, num_hiddens), device=device), )
-
-
-def rnn_forward(inputs, state, params):
-    W_xh, W_hh, b_h, W_hq, b_q = params
-    H, = state
-    outputs = []
-    # inputs: (seq_len, batch_size, vocab_size)
-    for X in inputs:  # X: (batch_size, vocab_size), W_xh: (vocab_size, hidden_size)
-        H = torch.tanh(torch.mm(X, W_xh) + torch.mm(H, W_hh) + b_h)
-        Y = torch.mm(H, W_hq) + b_q
-        # outputs: (seq_len, batch_size, vocab_size)
-        outputs.append(Y)  # Y: (batch_size, vocab_size)
-    
-    # merge seq_len and batch_size → (seq_len × batch_size, vocab_size)
-    return torch.cat(outputs, dim=0), (H,)
-
-
-class RNNModelScratch:
-    def __init__(self, vocab_size, num_hiddens, device, get_params,
-                 init_state, forward_fn):
-        self.vocab_size, self.num_hiddens = vocab_size, num_hiddens
-        self.params = get_params(vocab_size, num_hiddens, device)
-        self.init_state, self.forward_fn = init_state, forward_fn
+    def begin_state(self, device, batch_size=1):
+        if not isinstance(self.rnn, nn.LSTM):
+            # nn.GRU以张量作为隐状态
+            return  torch.zeros((self.num_directions * self.rnn.num_layers,
+                                 batch_size, self.num_hiddens),
+                                device=device)
+        else:
+            # nn.LSTM以元组作为隐状态
+            return (torch.zeros((
+                self.num_directions * self.rnn.num_layers,
+                batch_size, self.num_hiddens), device=device),
+                    torch.zeros((
+                        self.num_directions * self.rnn.num_layers,
+                        batch_size, self.num_hiddens), device=device))
         
-    def __call__(self, X, state):
-        # X input size: (batch_size × seq_len)
-        # in each sequence，a token corresponds to an index
-        X = F.one_hot(X.T, self.vocab_size).type(torch.float32)
-        # after one_hot f: (seq_len × batch_size × vocab_size)
-        # vocab_size = dimension of one-hot vector
-        return self.forward_fn(X, state, self.params)
-
-    def begin_state(self, batch_size, device):
-        return self.init_state(batch_size, self.num_hiddens, device)
-    
-    

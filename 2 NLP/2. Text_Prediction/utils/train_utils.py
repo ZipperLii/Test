@@ -3,15 +3,27 @@ import math
 import torch.nn as nn
 from d2l import torch as d2l
 
+def try_gpu(i=0):
+    if torch.cuda.device_count() >= i + 1:
+        return torch.device(f'cuda:{i}')
+    return torch.device('cpu')
+
 def grad_clipping(net, theta):
     if isinstance(net, nn.Module):
         params = [p for p in net.parameters() if p.requires_grad]
     else:
         params = net.params
-    norm = torch.sqrt(sum(torch.sum((p.grad ** 2)) for p in params))
+    # norm = torch.sqrt(sum(torch.sum((p.grad ** 2)) for p in params))
+    norm = torch.sqrt(sum(torch.sum((p.grad ** 2)) for p in params if p.grad is not None))
     if norm > theta:
         for param in params:
             param.grad[:] *= theta / norm
+
+def sgd(params, lr, batch_size):
+    with torch.no_grad():
+        for param in params:
+            param -= lr * param.grad / batch_size
+            param.grad.zero_()
 
 def prediction(prefix, num_preds, net, vocab, device):
     # initialize state
@@ -36,6 +48,8 @@ def train_epoch(net, train_iter, loss, updater, device, random_iter):
     for X, Y in train_iter:
         if state is None or random_iter:
             # initialize state
+            # if random_iter, update begin_state before each batch
+            # (no hidden_state information between each batch)
             state = net.begin_state(batch_size=X.shape[0], device=device)
         else:
             # if not initial state, prevent gradient backward to h(t-1)
@@ -47,6 +61,7 @@ def train_epoch(net, train_iter, loss, updater, device, random_iter):
                     s.detach_()
         y = Y.T.reshape(-1)
         X, y = X.to(device), y.to(device)
+            
         # y_hat: 
         y_hat, state = net(X, state)
         # calculate perplexity
@@ -69,18 +84,21 @@ def train_epoch(net, train_iter, loss, updater, device, random_iter):
 def train_model(net, train_iter, vocab, lr, num_epochs, device,
               use_random_iter=False):
     loss = nn.CrossEntropyLoss()
+    print('Training on', device)
+    if isinstance(net, nn.Module):
+        net.to(device)
     if isinstance(net, nn.Module):
         updater = torch.optim.SGD(net.parameters(), lr)
     else:
-        updater = lambda batch_size: d2l.sgd(net.params, lr, batch_size)
+        updater = lambda batch_size: sgd(net.params, lr, batch_size)
     predict = lambda prefix: prediction(prefix, 50, net, vocab, device)
 
     for epoch in range(num_epochs):
         ppl = train_epoch(
             net, train_iter, loss, updater, device, use_random_iter)
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 10 == 0: # prediction every 10 epochs
             print(predict('time traveller'))
-    print(f'困惑度 {ppl:.1f}, {str(device)}')
+    print(f'Perplexity: {ppl:.1f}, {str(device)}')
     print(predict('time traveller'))
     print(predict('traveller'))
     
